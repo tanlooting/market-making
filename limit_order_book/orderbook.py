@@ -23,7 +23,8 @@ from dotenv import dotenv_values
 from decimal import Decimal
 from termcolor import cprint
 from collections import defaultdict
-
+from scipy.optimize import curve_fit
+from typing import Tuple
 
 class BackOffException(Exception):
     ...
@@ -41,15 +42,15 @@ class LunoOrderBook:
         # buffer
         self.bid_trades = list()
         self.ask_trades = list()
-        self.BUFFER_DURATION = 1 # mins
-        self.bid_buffer_ready = False
-        self.ask_buffer_ready = False
+        self.trade_buffer_duration = 10 # mins
         self.trade_buffer_ready = False
         # instantaneous volatility ~0.05% 
         self.vol_buffer_size = 200 # ticks
         self.vol_buffer_ready = False
         self.vol_buffer = list()
-        self.vol = None
+        self.vol = np.nan
+        self.alpha = np.nan
+        self.kappa = np.nan
 
         self.ws = None
         self.sequence = None
@@ -59,9 +60,9 @@ class LunoOrderBook:
         self.time_last_connection_attempt = None
         self.bid_sorted = None
         self.ask_sorted = None
-        self.vamp = None
-        self.mid_price = None
-        self.order_imbalance = None
+        self.vamp = 0
+        self.mid_price = 0
+        self.order_imbalance = 0
         self.start_time = int(time.time()*1000)
         
         
@@ -83,6 +84,7 @@ class LunoOrderBook:
         self.time_last_connection_attempt = time.time()
 
         self.ws = await websockets.connect(self.url, ping_interval=1)
+
         await self.ws.send(json.dumps(self.auth))
 
         msg = await self.ws.recv()
@@ -105,52 +107,59 @@ class LunoOrderBook:
         """first msg is always a full order book"""
         await self.connect()
         cprint("Streaming starts","green")
-        async for msg in self.ws:
-            if msg == '""':
+
+        # async for msg in self.ws:
+        while True:
+            try:
+                msg = await self.ws.recv()
+                if msg == '""':
+                    continue
+                await self.handle_message(msg)
+                
+
+                ts = time.time()*1000
+                #print(self.print_aggregated_lob())
+                self.bid_sorted = self.consolidate(self.bids.values(), reverse=True)
+                self.ask_sorted = self.consolidate(self.asks.values())
+
+                if ts > self.start_time + self.trade_buffer_duration*60*1000:
+                    if self.ask_trades and self.bid_trades:
+                        self.trade_buffer_ready = True
+                        self.alpha, self.kappa = self.trading_intensity()
+                
+                # calculate prices
+                self.calc_vamp(levels = 10)
+                self.calc_midprice()
+                self.calc_spread()
+                self.calc_order_imbalance(levels = 10)
+                # use vamp for volatility calculation
+                self.vol_buffer.append(self.vamp)
+                if len(self.vol_buffer) > self.vol_buffer_size:
+                    self.vol_buffer.pop(0)
+                    self.volatility_buffer_ready = True
+                    self.vol = np.sqrt(np.sum(np.square(np.diff(np.array(self.vol_buffer))/np.array(self.vol_buffer)[:-1]*100))/self.vol_buffer_size)
+                
+                processed_msg = dict(
+                    ts=ts,
+                    mid_price=str(self.mid_price),
+                    spread=str(self.spread),
+                    best_bid=str(self.bid_sorted[0][0]),
+                    best_ask=str(self.ask_sorted[0][0]),
+                    best_bid_size=str(self.bid_sorted[0][1]),
+                    best_ask_size=str(self.ask_sorted[0][1]),
+                    vamp=str(self.vamp),
+                    order_imbalance=str(self.order_imbalance),
+                    buffer_ready = str(self.trade_buffer_ready),
+                    volatility = str(self.vol), # in pct
+                    alpha = str(self.alpha),
+                    kappa = str(self.kappa),
+                )
+                self._redis.publish(f"LOB::{self.pair}", json.dumps(processed_msg))
+            except websockets.ConnectionClosedError as e:
+                cprint(e, "red")
+                await self.connect()
+                cprint("Reconnecting...", "green")
                 continue
-            await self.handle_message(msg)
-
-            ts = time.time()*1000
-            #print(self.print_aggregated_lob())
-            self.bid_sorted = self.consolidate(self.bids.values(), reverse=True)
-            self.ask_sorted = self.consolidate(self.asks.values())
-
-            if ts > self.start_time + self.BUFFER_DURATION*60*1000:
-                if self.ask_trades:
-                    self.bid_buffer_ready = True
-                    self.compute_cdf(self.ask_trades)
-                if self.bid_trades:
-                    self.ask_buffer_ready = True 
-                    self.compute_cdf(self.bid_trades)
-            self.trade_buffer_ready = self.bid_buffer_ready and self.ask_buffer_ready
-
-            # calculate prices
-            self.calc_vamp(levels = 10)
-            self.calc_midprice()
-            self.calc_spread()
-            self.calc_order_imbalance(levels = 10)
-            # use vamp for volatility calculation
-            self.vol_buffer.append(self.vamp)
-            if len(self.vol_buffer) > self.vol_buffer_size:
-                self.vol_buffer.pop(0)
-                self.volatility_buffer_ready = True
-                self.vol = np.sqrt(np.sum(np.square(np.diff(np.array(self.vol_buffer))/np.array(self.vol_buffer)[:-1]*100))/self.vol_buffer_size)
-            
-            processed_msg = dict(
-                ts=ts,
-                mid_price=str(self.mid_price),
-                spread=str(self.spread),
-                best_bid=str(self.bid_sorted[0][0]),
-                best_ask=str(self.ask_sorted[0][0]),
-                best_bid_size=str(self.bid_sorted[0][1]),
-                best_ask_size=str(self.ask_sorted[0][1]),
-                vamp=str(self.vamp),
-                order_imbalance=str(self.order_imbalance),
-                buffer_ready = str(self.trade_buffer_ready),
-                volatility = str(self.vol) # in pct
-            )
-            self._redis.publish(f"LOB::{self.pair}", json.dumps(processed_msg))
-            
 
     async def handle_message(self, msg):
         """Call individual handlers depending on order type"""
@@ -206,12 +215,14 @@ class LunoOrderBook:
                 msg = {
                     'ts': ts, 
                     'price': float(update['price']), 
-                    'amount': float(update['base'])
+                    'amount': float(update['base']),
+                    'mid_price': float(self.mid_price),
+                    'distance': abs(float(update['price']- self.mid_price))
                     }
                 self._redis.publish(f"TRADES::{self.pair}", json.dumps(dict(**msg, bidask="ask")))
             
                 self.ask_trades.append(msg)
-                if ts - self.BUFFER_DURATION*60*1000>self.ask_trades[0]['ts']:
+                if ts - self.trade_buffer_duration*60*1000>self.ask_trades[0]['ts']:
                     self.ask_trades.pop(0)
                 cprint(update, "red")
             elif maker_order_id in self.asks:
@@ -220,12 +231,14 @@ class LunoOrderBook:
                 msg = {
                     'ts': ts, 
                     'price': float(update['price']), 
-                    'amount': float(update['base'])
+                    'amount': float(update['base']),
+                    'mid_price': float(self.mid_price),
+                    'distance': abs(float(update['price'] - self.mid_price))
                     }
                 self._redis.publish(f"TRADES::{self.pair}", json.dumps(dict(**msg, bidask="bid")))
                 self.bid_trades.append(msg)
 
-                if ts - self.BUFFER_DURATION*60*1000>self.bid_trades[0]['ts']:
+                if ts - self.trade_buffer_duration*60*1000>self.bid_trades[0]['ts']:
                     self.bid_trades.pop(0)
                 cprint(update, "green")
 
@@ -244,8 +257,23 @@ class LunoOrderBook:
         cdf = None
         return cdf
     
-    def trading_intensity(self, trades):
-        return
+    
+    def trading_intensity(self) -> Tuple[float, float]:
+        """Return alpha and kappa"""
+        trades = pd.DataFrame(self.ask_trades + self.bid_trades)
+        sorted_trades = (trades.groupby('distance')
+                         .agg({'amount':'sum'})
+                         .reset_index()
+                         .sort_values('distance'))
+        print(sorted_trades)
+        params = curve_fit(lambda t, a,b: a*np.exp(-b*t), 
+                   sorted_trades['distance'].to_list(), 
+                   sorted_trades['amount'].to_list(),
+                   p0 = (0,0),
+                   method = "dogbox", 
+                   bounds = ([0,0], [np.inf, np.inf]))
+
+        return params[0][0], params[0][1]
 
     @staticmethod
     def consolidate(orders, reverse:bool=False):

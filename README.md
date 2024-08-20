@@ -3,13 +3,31 @@
 This repo runs a simple market making bot on Luno.
 
 ## Avellaneda & Stoikov Market Making
-<insert theory here>
+
+Reservation price $r(s,t) = s-q\gamma \sigma^2(T-t)$
+
+Spread $\delta^a + \delta^b = \gamma\sigma^2 (T-t) +ln(1+\frac{\gamma}{\kappa})$
+
+Order sizing:
+
+$\phi^{bid}_t = \phi^{max}_t \exp (-\eta q_t) \text{if } q_t>0$
+
+$\phi^{ask}_t = \phi^{max}_t \exp (\eta q_t) \text{if } q_t<0$
+
+Order size is first quantized to the right size allowed by the exchange, and then floor at min order size allowed.
+Price size is also quantized to the right tick size allowed by the exchange.
+
+### Market Variables
+Volatility $\sigma$ time window is a variable defined and calculated upfront in orderbook. It is currently calculated using VAMP or any fair price methodology that you prefer.
+
+$\kappa$ is modeled based on all trade data (market depth $\delta$ vs execution size) of a given lookback window (this is also defined in orderbook).
+
+$\lambda (\delta) = Aexp(-\kappa \delta)$
 
 ## Set Up
 
-
 ### Redis
-Run Redis on Docker. 
+Run Redis on Docker with the following configs. 
 
 ```
 REDIS_HOST = "127.0.0.1"
@@ -39,7 +57,7 @@ Listen to user streams for fill and order status updates.
 `python order_gateway/order_gateway.py`
 
 ### Market Making Bot
-`python marketmaking/trading.py`
+`python marketmaking/avellaneda.py`
 
 #### Listen to redis 
 ```
