@@ -42,7 +42,7 @@ class LunoOrderBook:
         # buffer
         self.bid_trades = list()
         self.ask_trades = list()
-        self.trade_buffer_duration = 10 # mins
+        self.trade_buffer_duration = 20 # mins
         self.trade_buffer_ready = False
         # instantaneous volatility ~0.05% 
         self.vol_buffer_size = 200 # ticks
@@ -64,7 +64,6 @@ class LunoOrderBook:
         self.mid_price = 0
         self.order_imbalance = 0
         self.start_time = int(time.time()*1000)
-        
         
 
     def check_backoff(self):
@@ -124,6 +123,7 @@ class LunoOrderBook:
 
                 if ts > self.start_time + self.trade_buffer_duration*60*1000:
                     if self.ask_trades and self.bid_trades:
+                        # do not update if there are no trades in the buffer
                         self.trade_buffer_ready = True
                         self.alpha, self.kappa = self.trading_intensity()
                 
@@ -132,7 +132,8 @@ class LunoOrderBook:
                 self.calc_midprice()
                 self.calc_spread()
                 self.calc_order_imbalance(levels = 10)
-                # use vamp for volatility calculation
+                # use your own definition of fair price for volatility calculation
+                # VAMP is used here
                 self.vol_buffer.append(self.vamp)
                 if len(self.vol_buffer) > self.vol_buffer_size:
                     self.vol_buffer.pop(0)
@@ -186,10 +187,24 @@ class LunoOrderBook:
         key = order["order_id"]
         book = self.bids if order["type"] == "BID" else self.asks
         book[key] = [price, volume]
+        ts = int(time.time()*1000)
+        msg = {
+            'ts': ts, 
+            'price': float(price),
+            'volume': float(volume),
+            'order_id': str(key),
+            }
+        self._redis.publish(f"ORDER::{self.pair}", json.dumps(msg))
 
     def handle_delete(self, data):
         """delete_update only has an order id key, so still have to traverse entire dict on both side to find"""
         order_id = data["delete_update"]["order_id"]
+        ts = int(time.time()*1000)
+        msg = {
+            'ts': ts, 
+            'order_id': str(order_id),
+            }
+        self._redis.publish(f"CANCEL::{self.pair}", json.dumps(msg))
         try:
             del self.bids[order_id]
         except KeyError:
@@ -265,7 +280,6 @@ class LunoOrderBook:
                          .agg({'amount':'sum'})
                          .reset_index()
                          .sort_values('distance'))
-        print(sorted_trades)
         params = curve_fit(lambda t, a,b: a*np.exp(-b*t), 
                    sorted_trades['distance'].to_list(), 
                    sorted_trades['amount'].to_list(),

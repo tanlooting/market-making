@@ -26,16 +26,33 @@ $\lambda (\delta) = Aexp(-\kappa \delta)$
 
 ## Set Up
 
-### Redis
-Run Redis on Docker with the following configs. 
+### User Inputs for Trading
+|Params|Default Value|
+|---|---|
+|order_size | 1|
+|risk aversion parameter $\gamma$ | 1 |
+|Order Shape Param $\eta$ | -0.005 |
+|min_spread |0|
+|Waiting time before updating orders: order_refresh_rate_s | 60 |
+|filled_order_delay_s | 60| 
+|max_order_age_s | 1800| 
+|Freq. of updating balance: update_balance_interval_s |2|
 
+### ENV variables
+To connect to your Luno account, include the following key_id and key_secret in the `.env` file.
+```
+LUNO_KEY_ID = ""
+LUNO_KEY_SECRET = ""
+```
+
+### Redis
+Run Redis on Docker with the following configs included in `.env` file. 
 ```
 REDIS_HOST = "127.0.0.1"
 REDIS_PORT = 6379
 ```
 
 All channels are by default: `LOB::<pairsymbol>` 
-User stream channels are `ORDER_UPDATES`
 
 ### Run Bash Script
 `bash scripts.sh` to start LOB, client order gateway, and trading scripts.
@@ -52,10 +69,6 @@ ob = LunoOrderBook(auth_config, "XBTMYR")
 asyncio.run(ob.run())
 ```
 
-### User Stream
-Listen to user streams for fill and order status updates.
-`python order_gateway/order_gateway.py`
-
 ### Market Making Bot
 `python marketmaking/avellaneda.py`
 
@@ -71,3 +84,10 @@ for msg in pubsub.listen():
     # processes every tick
     self.on_tick(msg)
 ```
+
+## Not implemented yet
+
+### User Stream
+Listen to user streams for fill and order status updates.
+`python order_gateway/order_gateway.py`
+User stream channels on Redis Stack are `ORDER_UPDATES`

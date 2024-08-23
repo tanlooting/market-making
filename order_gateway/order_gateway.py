@@ -175,8 +175,8 @@ class LunoUserStream:
         )
 
     @staticmethod
-    def balance_update_handler(message) -> dict:
-        """
+    def balance_update_handler(msg: dict) -> dict:
+        """ Not implemented yet
         balance_update
         {
         "account_id": 8203463422864003664",
@@ -187,7 +187,7 @@ class LunoUserStream:
         "available_delta": "1.00000000"
         }
         """
-        return dict()
+        return msg
     
 
 if __name__ == "__main__":

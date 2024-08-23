@@ -12,7 +12,6 @@ Supported:
   - AVAXMYR
   - XRPMYR
 
-
 min_order_size:
   XBTMYR: 0.0002
   ETHMYR: 0.001
