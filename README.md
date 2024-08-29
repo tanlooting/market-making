@@ -1,6 +1,6 @@
 # Market Making
 
-This repo runs a simple market making bot on Luno.
+This repo runs a simple market making bot on Luno based on Avellaneda & Stoikov (2006).
 
 ## Avellaneda & Stoikov Market Making
 

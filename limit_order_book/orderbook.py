@@ -248,6 +248,8 @@ class LunoOrderBook:
                     'price': float(update['price']), 
                     'amount': float(update['base']),
                     'mid_price': float(self.mid_price),
+                    'best_bid': float(self.bid_sorted[0][0]), # needed for wash trades detection
+                    'best_ask': float(self.ask_sorted[0][0]), # needed for wash trades detection
                     'distance': abs(float(update['price'] - self.mid_price))
                     }
                 self._redis.publish(f"TRADES::{self.pair}", json.dumps(dict(**msg, bidask="bid")))
@@ -269,9 +271,7 @@ class LunoOrderBook:
             existing_order[1] -= Decimal(update["base"])
 
     def compute_cdf(self, trades):
-        cdf = None
-        return cdf
-    
+        raise NotImplementedError("This method is not implemented yet.")
     
     def trading_intensity(self) -> Tuple[float, float]:
         """Return alpha and kappa"""
@@ -348,7 +348,6 @@ class LunoOrderBook:
 
 if __name__ == "__main__":
     # python limit_order_book/orderbook.py -s XBTMYR
-    
     parser = argparse.ArgumentParser()
     parser.add_argument("-s", "--symbol",type = str, help="Symbol")
     args = parser.parse_args()

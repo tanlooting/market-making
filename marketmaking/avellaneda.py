@@ -93,12 +93,11 @@ class AvellanedaStrategy:
         alpha = float(tick['alpha'])
         kappa = float(tick['kappa'])
         
-        # update balance
+        # update balance every update_balance_interval_s
         if time.time() - self._last_update_balance_time_s > self.update_balance_interval_s:
             self.update_balance()
         
         # update inventory calculation
-        # XBT in MYR
         self.base_in_quote = self.inventory[self._base_asset] * mid_price
         self.inventory_in_quote = self.base_in_quote + self.inventory[self._quote_asset]
         self.inventory_in_base = self.inventory_in_quote / mid_price
